@@ -1,190 +1,233 @@
+<!DOCTYPE html>
 <html>
-	<head>
-  <!--
+<head>
+  <meta charset="utf-8">
+  <title>Bucket loading...</title>
+  <link href="//netdna.bootstrapcdn.com/bootstrap/2.3.2/css/bootstrap.min.css" rel="stylesheet"/>
+  <style>
+    .hide-while-loading {
+      display: none;
+    }
+    .i-expand-collapse {
+      opacity: 0.6;
+      cursor: pointer;
+    }
+    .i-file-or-folder {
+      margin-right: 4px;
+    }
+  </style>
 
-  Amazon S3 Bucket listing.
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/handlebars.js/1.1.2/handlebars.min.js"></script>
+  <script src="//cdnjs.cloudflare.com/ajax/libs/moment.js/2.4.0/moment.min.js"></script>
+</head>
+<body>
 
-
-  Copyright (C) 2008 Francesco Pasqualini
-
-      This program is free software: you can redistribute it and/or modify
-      it under the terms of the GNU General Public License as published by
-      the Free Software Foundation, either version 3 of the License, or
-      (at your option) any later version.
-
-      This program is distributed in the hope that it will be useful,
-      but WITHOUT ANY WARRANTY; without even the implied warranty of
-      MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-      GNU General Public License for more details.
-
-      You should have received a copy of the GNU General Public License
-      along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-  -->
-  <!--
-
-  Modified by Nolan Lawson!  (http://nolanlawson.com).  I'm keeping the spirit of the
-  GPL alive by issuing this with the same license!
-
-  -->
-
-	  <title>Bucket loading...</title>
-	  <link href="//netdna.bootstrapcdn.com/bootstrap/2.3.2/css/bootstrap.min.css" rel="stylesheet"/>
-	  <style>
-	    .hide-while-loading {
-	      display:none;
-	    }
-	    .i-expand-collapse {
-	      opacity: 0.3;
-	    }
-	    .i-file-or-folder {
-	      margin-right: 4px;
-	    }
-	  </style>
-
-	  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>
-	  <script src="//cdnjs.cloudflare.com/ajax/libs/handlebars.js/1.1.2/handlebars.min.js"></script>
-	  <script src="//cdnjs.cloudflare.com/ajax/libs/moment.js/2.4.0/moment.min.js"></script>
-	</head>
-	<body>
-
-	  <div class="container">
-  	  <h1 id="h1-title">Bucket loading...</h1>
-  	  <table class="hide-while-loading table table-striped">
-  	    <thead>
-  	      <tr>
-  	        <th>Name</th>
-  	        <th>Date Modified</th>
-  	        <th>Size</th>
-  	        <th>Type</th>
-  	      </tr>
-  	    </thead>
-  	    <tbody id="tbody-content">
-  	    </tbody>
-  	  </table>
-	  </div>
+  <div class="container">
+    <h1 id="h1-title">Bucket loading...</h1>
+    <table class="hide-while-loading table table-striped">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Date Modified</th>
+          <th>Size</th>
+          <th>Type</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-content"></tbody>
+    </table>
+  </div>
 
   <script id="file-or-folder" type="text/x-handlebars-template">
-    <tr>
-      {{#if isFolder}}
-        <td><i class="icon-chevron-down i-expand-collapse" style="margin-left:calc(({{numLevels}} - 1) * 16px)");></i><i class="icon-folder-open i-file-or-folder" style="margin-left:4px;"></i>
-        {{simpleFilename}}</td>
-      {{else}}
-        <td><i class="icon-file i-file-or-folder"  style="margin-left:calc(({{numLevels}} * 16px) + 4px);"></i>
-        <a href="{{url}}">{{simpleFilename}}</a></td>
-      {{/if}}
+    <tr class="file-row"
+        data-level="{{numLevels}}"
+        {{#if isFolder}}data-folder="{{key}}"{{else}}data-parent="{{parentFolder}}" style="display:none;"{{/if}}>
+      <td>
+        {{#if isFolder}}
+          <i class="icon-chevron-right i-expand-collapse" style="margin-left:calc(({{numLevels}} - 1) * 16px);"></i>
+          <i class="icon-folder-open i-file-or-folder" style="margin-left:4px;"></i>
+          {{simpleFilename}}
+        {{else}}
+          <i class="icon-file i-file-or-folder" style="margin-left:calc(({{numLevels}} * 16px) + 4px);"></i>
+          <a href="{{url}}">{{simpleFilename}}</a>
+        {{/if}}
+      </td>
       <td>{{friendlyLastModified}}</td>
-
       <td>{{friendlySizeName}}</td>
       <td>{{type}}</td>
     </tr>
   </script>
-	<script>
-	(function($){
-	  "use strict";
-	  var FOLDER_PATTERN = new RegExp('\/$');
-	  var TYPE_PATTERN = new RegExp('\\.([^\\.\\s]{1,10})$');
-		var KB = 1024;
-		var MB = 1000000;
-		var GB = 1000000000;
 
-    // replace last /index.html to get bucket root
-	  var bucketUrl = document.location.href.replace(/\/[^\/]+$/, '');
-		var compiledTemplate;
+  <script>
+  (function($){
+    "use strict";
+    // Dynamically determine the bucket URL based on the current location, unless overridden
+    var bucketUrl = window.bucketUrl || (window.location.protocol + '//' + window.location.host + window.location.pathname.replace(/\/[^/]*$/, '/'));
+    var compiledTemplate;
+    var loadedFolders = {};
 
-    // return e.g. 1.2KB, 1.3MB, 2GB, etc.
-	  function toFriendlySizeName(size){
-	    if (size === 0) {
-	      return '';
-	    } else if (size < KB) {
-	      return size + ' B';
-	    } else if (size < MB) {
-	      return (size / KB).toFixed(0) + ' KB';
-	    } else if (size < GB) {
-	      return (size / MB).toFixed(2) + ' MB';
-	    }
-	    return (size / GB).toFixed(2) + ' GB';
-	  }
+    var FOLDER_PATTERN = /\/$/;
+    var TYPE_PATTERN = /\.([^.\s]{1,10})$/;
+    var KB = 1024, MB = 1000000, GB = 1000000000;
 
+    function toFriendlySizeName(size) {
+      if (size === 0) return '';
+      if (size < KB) return size + ' B';
+      if (size < MB) return (size / KB).toFixed(0) + ' KB';
+      if (size < GB) return (size / MB).toFixed(2) + ' MB';
+      return (size / GB).toFixed(2) + ' GB';
+    }
 
-	  // POJO describing a file or a folder
-	  function FileOrFolder(lastModified, etag, size, key){
-	    var self = this;
+    function FileOrFolder(lastModified, etag, size, key) {
+      this.lastModified = lastModified;
+      this.etag = etag;
+      this.size = size;
+      this.key = key;
+      this.isFolder = FOLDER_PATTERN.test(key);
+      this.filename = this.isFolder ? key.replace(FOLDER_PATTERN, '') : key;
+      this.url = bucketUrl + '/' + key;
+      this.levels = this.filename.split('/');
+      this.numLevels = this.levels.length;
+      this.simpleFilename = this.levels[this.numLevels - 1];
+      this.friendlySizeName = toFriendlySizeName(parseInt(size, 10));
+      var foundTypes = TYPE_PATTERN.exec(this.simpleFilename);
+      this.type = this.isFolder ? 'Folder' : (foundTypes ? (foundTypes[1].toUpperCase() + ' file') : 'Unknown');
+      this.friendlyLastModified = moment(lastModified).format('MMM Do YYYY, hh:mm:ss a');
+      this.parentFolder = this.levels.length > 1 ? key.substring(0, key.lastIndexOf(this.simpleFilename)) : '';
+    }
 
-	    self.lastModified = lastModified;
-	    self.etag = etag;
-	    self.size = size;
-	    self.key = key;
+    function renderAndInsert(items, afterRowSelector) {
+      var rows = '';
+      items.forEach(function(item) {
+        rows += compiledTemplate(item);
+      });
+      $(afterRowSelector).after(rows);
+    }
 
-	    // init logic
-	    self.isFolder = FOLDER_PATTERN.test(self.key);
-	    self.filename = self.isFolder ? self.key.replace(FOLDER_PATTERN,'') : self.key;
-	    self.url = bucketUrl + '/' + self.key;
-	    self.levels = self.filename.split('/');
-	    self.numLevels = self.levels.length;
-	    self.simpleFilename = self.levels[self.numLevels - 1];
-	    self.friendlySizeName = toFriendlySizeName(parseInt(self.size,10));
-	    var foundTypes = TYPE_PATTERN.exec(self.simpleFilename);
-	    self.type = self.isFolder ? 'Folder ' : (foundTypes ? (foundTypes[1].toUpperCase() + ' file') : 'Unknown');
-	    self.friendlyLastModified = moment(lastModified).format('MMM Do YYYY, hh:mm:ss a');
-	  }
+    function fetchAndRenderFolder(prefix, parentRow) {
+      if (loadedFolders[prefix]) {
+        // Toggle already-loaded children
+        toggleChildren(prefix);
+        return;
+      }
 
-		function onAjaxSuccess(xml) {
-			var listBucketResult = $(xml).find('ListBucketResult');
+      $.ajax({
+        url: bucketUrl + "/?prefix=" + encodeURIComponent(prefix) + "&delimiter=/",
+        success: function(xml) {
+          var listBucketResult = $(xml).find('ListBucketResult');
+          var items = [];
 
-			// set a reasonable title instead of "Bucket loading"
-			var title = 'Index of bucket "' + listBucketResult.find('Name').text() + '"';
-			document.title = title;
-			$('#h1-title').text(title);
+          // Folders
+          listBucketResult.find('CommonPrefixes').each(function(_, el) {
+            var key = $(el).find('Prefix').text();
+            items.push(new FileOrFolder(new Date().toISOString(), '', 0, key));
+          });
 
-			var $tbodyContent = $('#tbody-content');
+          // Files
+          listBucketResult.find('Contents').each(function(_, el) {
+            var $el = $(el);
+            var key = $el.find('Key').text();
+            if (key.match(FOLDER_PATTERN)) return; // skip folder placeholders
+            items.push(new FileOrFolder(
+              $el.find('LastModified').text(),
+              $el.find('ETag').text(),
+              $el.find('Size').text(),
+              key
+            ));
+          });
 
-			// create the file or folder objects
+          // Sort
+          items.sort((a, b) => a.key.localeCompare(b.key));
 
-			var filesOrFolders = [];
+          // Render
+          renderAndInsert(items, parentRow);
 
-			listBucketResult.find('Contents').each(function(idx, element){
+          loadedFolders[prefix] = true;
 
-				var $element = $(element);
+          // Show only direct children
+          $('tr[data-parent="' + prefix + '"]').show();
+        }
+      });
+    }
 
-				var fileOrFolder = new FileOrFolder(
-					 $element.find('LastModified').text(),
-					 $element.find('ETag').text(),
-					 $element.find('Size').text(),
-					 $element.find('Key').text()
-				);
+    function toggleChildren(folderKey) {
+      var $children = $('tr[data-parent^="' + folderKey + '"]');
+      var directChildren = $children.filter(function() {
+        return $(this).data('parent') === folderKey;
+      });
 
-				filesOrFolders.push(fileOrFolder);
-			});
+      if (directChildren.first().is(':visible')) {
+        // Collapse all descendants
+        $children.hide();
+        $children.find('.icon-chevron-down').removeClass('icon-chevron-down').addClass('icon-chevron-right');
+      } else {
+        // Expand only direct children
+        directChildren.show();
+      }
+    }
 
-			// sort
-			filesOrFolders.sort(function(left, right){
-				if (left.levels === right.levels) {
-					return 0;
-				} else if (left.levels < right.levels) {
-					return -1;
-				}
-				return 1;
-			});
+    function onInitialLoad(xml) {
+      var listBucketResult = $(xml).find('ListBucketResult');
+      var title = 'Index of bucket "' + listBucketResult.find('Name').text() + '"';
+      document.title = title;
+      $('#h1-title').text(title);
 
-			// fill in the rows
-			var str = '';
-			for (var i = 0; i < filesOrFolders.length; i ++) {
-				str += compiledTemplate(filesOrFolders[i]);
-			}
-			$tbodyContent.append(str);
-			$('.hide-while-loading').show();
-		}
+      var items = [];
 
-		$.ajax({
-         url: bucketUrl,
-         success: onAjaxSuccess
-		});
+      // Folders
+      listBucketResult.find('CommonPrefixes').each(function(_, el) {
+        var key = $(el).find('Prefix').text();
+        items.push(new FileOrFolder(new Date().toISOString(), '', 0, key));
+      });
 
-    // compile while ajax is in progress
-		compiledTemplate = Handlebars.compile($('#file-or-folder').html());
+      // Files
+      listBucketResult.find('Contents').each(function(_, el) {
+        var $el = $(el);
+        var key = $el.find('Key').text();
+        if (key.match(FOLDER_PATTERN)) return;
+        items.push(new FileOrFolder(
+          $el.find('LastModified').text(),
+          $el.find('ETag').text(),
+          $el.find('Size').text(),
+          key
+        ));
+      });
 
-	})(jQuery);
-	</script>
-	</body>
+      items.sort((a, b) => a.key.localeCompare(b.key));
+
+      var str = '';
+      items.forEach(function(item) {
+        str += compiledTemplate(item);
+      });
+      $('#tbody-content').html(str);
+      $('.hide-while-loading').show();
+
+      attachExpandHandlers();
+    }
+
+    function attachExpandHandlers() {
+      $('#tbody-content').on('click', '.i-expand-collapse', function() {
+        var $icon = $(this);
+        var $row = $icon.closest('tr');
+        var folderKey = $row.data('folder');
+
+        // Toggle icon
+        $icon.toggleClass('icon-chevron-right icon-chevron-down');
+
+        fetchAndRenderFolder(folderKey, $row);
+      });
+    }
+
+    $(function() {
+      compiledTemplate = Handlebars.compile($('#file-or-folder').html());
+      $.ajax({
+        url: bucketUrl + "/?delimiter=/",
+        success: onInitialLoad
+      });
+    });
+
+  })(jQuery);
+  </script>
+
+</body>
 </html>
